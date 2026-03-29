@@ -1,19 +1,13 @@
 const express = require('express');
 const cors = require('cors');
-const { Client, LocalAuth, RemoteAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const axios = require('axios');
-const qrcode = require('qrcode');
 
 const app = express();
-
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type']
-}));
+app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'] }));
 app.use(express.json());
 
-const GROQ_API_KEY = "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"; // COLE SUA CHAVE AQUI
+const GROQ_API_KEY = "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"; // COLE SUA CHAVE
 
 const sessions = new Map();
 
@@ -23,16 +17,13 @@ app.get('/', (req, res) => {
 
 app.get('/api/status/:sessionId', (req, res) => {
     const session = sessions.get(req.params.sessionId);
-    if (session && session.ready) {
-        res.json({ status: 'connected', ready: true });
-    } else if (session) {
-        res.json({ status: 'connecting', ready: false });
-    } else {
-        res.json({ status: 'disconnected', ready: false });
-    }
+    res.json({ status: session?.ready ? 'connected' : 'disconnected', ready: !!session?.ready });
 });
 
 app.post('/api/start', async (req, res) => {
+    console.log('📱 POST /api/start recebido');
+    console.log('Body:', req.body);
+    
     const { sessionId, systemPrompt, clinicName, attendantName } = req.body;
     
     if (!sessionId) {
@@ -47,74 +38,54 @@ app.post('/api/start', async (req, res) => {
     
     const client = new Client({
         authStrategy: new LocalAuth({ clientId: sessionId }),
-        puppeteer: {
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--no-first-run',
-                '--no-zygote',
-                '--single-process',
-                '--disable-gpu'
-            ]
+        puppeteer: { 
+            headless: true, 
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] 
         }
     });
     
     client.on('qr', async (qr) => {
-        console.log(`QR Code gerado para ${sessionId}`);
+        console.log('📱 QR Code gerado');
         if (!qrSent) {
             qrSent = true;
-            // Envia o QR code como resposta
             res.json({ success: true, qrCode: qr });
         }
     });
     
     client.on('ready', () => {
         console.log(`✅ WhatsApp conectado: ${sessionId}`);
-        sessions.set(sessionId, {
-            client,
-            systemPrompt,
-            clinicName,
-            attendantName,
-            ready: true
-        });
+        sessions.set(sessionId, { client, systemPrompt, clinicName, attendantName, ready: true });
     });
     
     client.on('message', async (message) => {
         const session = sessions.get(sessionId);
-        if (!session || !session.ready) return;
-        if (message.fromMe) return;
+        if (!session?.ready || message.fromMe) return;
         
         console.log(`📩 Mensagem: ${message.body.substring(0, 50)}`);
         
         try {
-            const finalPrompt = (session.systemPrompt || 'Você é um atendente virtual')
+            const prompt = (session.systemPrompt || 'Você é um atendente')
                 .replace(/{clinic_name}/g, session.clinicName || 'Clínica')
                 .replace(/{attendant_name}/g, session.attendantName || 'Atendente');
             
             const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
                 model: 'mixtral-8x7b-32768',
                 messages: [
-                    { role: 'system', content: finalPrompt },
+                    { role: 'system', content: prompt },
                     { role: 'user', content: message.body }
-                ],
-                temperature: 0.7,
-                max_tokens: 500
+                ]
             }, {
                 headers: {
                     'Authorization': `Bearer ${GROQ_API_KEY}`,
                     'Content-Type': 'application/json'
-                },
-                timeout: 30000
+                }
             });
             
             await client.sendMessage(message.from, response.data.choices[0].message.content);
-            console.log(`📤 Resposta enviada`);
-        } catch (error) {
-            console.error('Erro IA:', error.message);
-            await client.sendMessage(message.from, 'Desculpe, estou com um problema técnico. Tente novamente.');
+            console.log('📤 Resposta enviada');
+        } catch (err) {
+            console.error('Erro IA:', err.message);
+            await client.sendMessage(message.from, 'Desculpe, tente novamente.');
         }
     });
     
@@ -125,12 +96,11 @@ app.post('/api/start', async (req, res) => {
     
     await client.initialize();
     
-    // Timeout de segurança
     setTimeout(() => {
         if (!qrSent) {
-            res.json({ success: true, message: 'Aguardando QR code...', qrCode: null });
+            res.json({ success: true, message: 'Waiting for QR code...', qrCode: null });
         }
-    }, 10000);
+    }, 15000);
 });
 
 const PORT = process.env.PORT || 3001;
