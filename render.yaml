@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: clinicai-backend
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 18.17.0
+    buildFilter:
+      paths:
+      - package.json
+      - package-lock.json
+      - server.js
+    autoDeploy: true
