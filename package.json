@@ -1,0 +1,15 @@
+{
+  "name": "clinicai-backend",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "whatsapp-web.js": "^1.23.0",
+    "qrcode": "^1.5.3",
+    "@google/generative-ai": "^0.1.3",
+    "axios": "^1.6.0"
+  }
+}
