@@ -1,41 +1,29 @@
 const express = require('express');
 const cors = require('cors');
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, RemoteAuth } = require('whatsapp-web.js');
 const axios = require('axios');
+const qrcode = require('qrcode');
 
 const app = express();
 
-// CORS liberado para qualquer origem
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type']
 }));
-
 app.use(express.json());
 
-// ==================== SUA API KEY DO GROQ ====================
 const GROQ_API_KEY = "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"; // COLE SUA CHAVE AQUI
-// ==============================================================
 
-const activeSessions = new Map();
+const sessions = new Map();
 
-// Rota principal
 app.get('/', (req, res) => {
-    res.json({ 
-        status: 'online', 
-        message: 'ClinicAI Backend is running!',
-        endpoints: {
-            start: 'POST /api/start',
-            status: 'GET /api/status/:sessionId'
-        }
-    });
+    res.json({ status: 'online', message: 'ClinicAI Backend is running!' });
 });
 
-// Rota de status
 app.get('/api/status/:sessionId', (req, res) => {
-    const session = activeSessions.get(req.params.sessionId);
-    if (session && session.isReady) {
+    const session = sessions.get(req.params.sessionId);
+    if (session && session.ready) {
         res.json({ status: 'connected', ready: true });
     } else if (session) {
         res.json({ status: 'connecting', ready: false });
@@ -44,56 +32,62 @@ app.get('/api/status/:sessionId', (req, res) => {
     }
 });
 
-// Rota para iniciar WhatsApp
 app.post('/api/start', async (req, res) => {
-    console.log('📱 Requisição recebida em /api/start');
-    console.log('Body:', JSON.stringify(req.body, null, 2));
-    
     const { sessionId, systemPrompt, clinicName, attendantName } = req.body;
     
     if (!sessionId) {
         return res.status(400).json({ error: 'sessionId required' });
     }
     
-    if (activeSessions.has(sessionId)) {
+    if (sessions.has(sessionId)) {
         return res.json({ success: true, message: 'Session already active' });
     }
     
-    let qrCodeSent = false;
+    let qrSent = false;
     
     const client = new Client({
         authStrategy: new LocalAuth({ clientId: sessionId }),
         puppeteer: {
             headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process',
+                '--disable-gpu'
+            ]
         }
     });
     
     client.on('qr', async (qr) => {
-        console.log(`📱 QR Code gerado para ${sessionId}`);
-        if (!qrCodeSent) {
-            qrCodeSent = true;
+        console.log(`QR Code gerado para ${sessionId}`);
+        if (!qrSent) {
+            qrSent = true;
+            // Envia o QR code como resposta
             res.json({ success: true, qrCode: qr });
         }
     });
     
     client.on('ready', () => {
-        console.log(`✅ WhatsApp conectado para ${sessionId}`);
-        activeSessions.set(sessionId, { 
-            client, 
+        console.log(`✅ WhatsApp conectado: ${sessionId}`);
+        sessions.set(sessionId, {
+            client,
             systemPrompt,
             clinicName,
             attendantName,
-            isReady: true 
+            ready: true
         });
     });
     
     client.on('message', async (message) => {
-        const session = activeSessions.get(sessionId);
-        if (!session || !session.isReady) return;
+        const session = sessions.get(sessionId);
+        if (!session || !session.ready) return;
         if (message.fromMe) return;
         
-        console.log(`📩 Mensagem de ${message.from}: ${message.body.substring(0, 50)}`);
+        console.log(`📩 Mensagem: ${message.body.substring(0, 50)}`);
         
         try {
             const finalPrompt = (session.systemPrompt || 'Você é um atendente virtual')
@@ -116,38 +110,30 @@ app.post('/api/start', async (req, res) => {
                 timeout: 30000
             });
             
-            const reply = response.data.choices[0].message.content;
-            await client.sendMessage(message.from, reply);
-            console.log(`📤 Resposta enviada para ${message.from}`);
-            
+            await client.sendMessage(message.from, response.data.choices[0].message.content);
+            console.log(`📤 Resposta enviada`);
         } catch (error) {
-            console.error('Erro ao processar:', error.message);
-            await client.sendMessage(message.from, 'Desculpe, estou com um problema técnico. Tente novamente em alguns instantes.');
+            console.error('Erro IA:', error.message);
+            await client.sendMessage(message.from, 'Desculpe, estou com um problema técnico. Tente novamente.');
         }
     });
     
-    client.on('disconnected', (reason) => {
-        console.log(`❌ WhatsApp desconectado para ${sessionId}: ${reason}`);
-        activeSessions.delete(sessionId);
-    });
-    
-    client.on('auth_failure', (msg) => {
-        console.log(`❌ Falha de autenticação: ${msg}`);
-        activeSessions.delete(sessionId);
+    client.on('disconnected', () => {
+        console.log(`❌ Desconectado: ${sessionId}`);
+        sessions.delete(sessionId);
     });
     
     await client.initialize();
     
-    // Timeout para caso não gere QR code
+    // Timeout de segurança
     setTimeout(() => {
-        if (!qrCodeSent) {
-            res.json({ success: true, message: 'Waiting for QR code...', qrCode: null });
+        if (!qrSent) {
+            res.json({ success: true, message: 'Aguardando QR code...', qrCode: null });
         }
-    }, 15000);
+    }, 10000);
 });
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 ClinicAI Backend running on port ${PORT}`);
-    console.log(`📱 Health check: http://localhost:${PORT}/`);
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
