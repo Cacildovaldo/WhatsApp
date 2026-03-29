@@ -5,7 +5,7 @@ const axios = require('axios');
 
 const app = express();
 
-// CORS mais permissivo para teste
+// CORS liberado para qualquer origem
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
@@ -14,11 +14,13 @@ app.use(cors({
 
 app.use(express.json());
 
-// SUA API KEY DO GROQ
+// ==================== SUA API KEY DO GROQ ====================
 const GROQ_API_KEY = "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"; // COLE SUA CHAVE AQUI
+// ==============================================================
 
 const activeSessions = new Map();
 
+// Rota principal
 app.get('/', (req, res) => {
     res.json({ 
         status: 'online', 
@@ -30,13 +32,7 @@ app.get('/', (req, res) => {
     });
 });
 
-app.options('/api/start', (req, res) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type');
-    res.sendStatus(200);
-});
-
+// Rota de status
 app.get('/api/status/:sessionId', (req, res) => {
     const session = activeSessions.get(req.params.sessionId);
     if (session && session.isReady) {
@@ -48,9 +44,10 @@ app.get('/api/status/:sessionId', (req, res) => {
     }
 });
 
+// Rota para iniciar WhatsApp
 app.post('/api/start', async (req, res) => {
-    console.log('📱 Recebida requisição para /api/start');
-    console.log('Body:', req.body);
+    console.log('📱 Requisição recebida em /api/start');
+    console.log('Body:', JSON.stringify(req.body, null, 2));
     
     const { sessionId, systemPrompt, clinicName, attendantName } = req.body;
     
@@ -96,63 +93,61 @@ app.post('/api/start', async (req, res) => {
         if (!session || !session.isReady) return;
         if (message.fromMe) return;
         
-        console.log(`📩 Mensagem de ${message.from}`);
+        console.log(`📩 Mensagem de ${message.from}: ${message.body.substring(0, 50)}`);
         
         try {
-            const response = await callGroqAI(message.body, session);
-            await client.sendMessage(message.from, response);
-            console.log(`📤 Resposta enviada`);
+            const finalPrompt = (session.systemPrompt || 'Você é um atendente virtual')
+                .replace(/{clinic_name}/g, session.clinicName || 'Clínica')
+                .replace(/{attendant_name}/g, session.attendantName || 'Atendente');
+            
+            const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+                model: 'mixtral-8x7b-32768',
+                messages: [
+                    { role: 'system', content: finalPrompt },
+                    { role: 'user', content: message.body }
+                ],
+                temperature: 0.7,
+                max_tokens: 500
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${GROQ_API_KEY}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 30000
+            });
+            
+            const reply = response.data.choices[0].message.content;
+            await client.sendMessage(message.from, reply);
+            console.log(`📤 Resposta enviada para ${message.from}`);
+            
         } catch (error) {
-            console.error('Erro:', error);
-            await client.sendMessage(message.from, 'Desculpe, estou com um problema técnico. Tente novamente.');
+            console.error('Erro ao processar:', error.message);
+            await client.sendMessage(message.from, 'Desculpe, estou com um problema técnico. Tente novamente em alguns instantes.');
         }
     });
     
-    client.on('disconnected', () => {
-        console.log(`❌ WhatsApp desconectado para ${sessionId}`);
+    client.on('disconnected', (reason) => {
+        console.log(`❌ WhatsApp desconectado para ${sessionId}: ${reason}`);
+        activeSessions.delete(sessionId);
+    });
+    
+    client.on('auth_failure', (msg) => {
+        console.log(`❌ Falha de autenticação: ${msg}`);
         activeSessions.delete(sessionId);
     });
     
     await client.initialize();
     
+    // Timeout para caso não gere QR code
     setTimeout(() => {
         if (!qrCodeSent) {
             res.json({ success: true, message: 'Waiting for QR code...', qrCode: null });
         }
-    }, 10000);
+    }, 15000);
 });
-
-async function callGroqAI(userMessage, session) {
-    const { systemPrompt, clinicName, attendantName } = session;
-    
-    const finalPrompt = (systemPrompt || 'Você é um atendente virtual')
-        .replace(/{clinic_name}/g, clinicName || 'Clínica')
-        .replace(/{attendant_name}/g, attendantName || 'Atendente');
-    
-    try {
-        const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: 'mixtral-8x7b-32768',
-            messages: [
-                { role: 'system', content: finalPrompt },
-                { role: 'user', content: userMessage }
-            ],
-            temperature: 0.7,
-            max_tokens: 500
-        }, {
-            headers: {
-                'Authorization': `Bearer ${GROQ_API_KEY}`,
-                'Content-Type': 'application/json'
-            }
-        });
-        
-        return response.data.choices[0].message.content;
-    } catch (error) {
-        console.error('Groq API Error:', error.response?.data || error.message);
-        return "Desculpe, estou com dificuldades técnicas. Por favor, tente novamente em alguns minutos.";
-    }
-}
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 ClinicAI Backend running on port ${PORT}`);
+    console.log(`📱 Health check: http://localhost:${PORT}/`);
 });
