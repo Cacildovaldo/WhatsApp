@@ -7,7 +7,13 @@ const app = express();
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'] }));
 app.use(express.json());
 
-const GROQ_API_KEY = "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"; // COLE SUA CHAVE
+// ==================== SEGURANÇA: API Key via variável de ambiente ====================
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+if (!GROQ_API_KEY) {
+    console.error('❌ ERRO: GROQ_API_KEY não configurada no ambiente!');
+    process.exit(1);
+}
+// ====================================================================================
 
 const sessions = new Map();
 
@@ -22,25 +28,28 @@ app.get('/api/status/:sessionId', (req, res) => {
 
 app.post('/api/start', async (req, res) => {
     console.log('📱 POST /api/start recebido');
-    console.log('Body:', req.body);
-    
     const { sessionId, systemPrompt, clinicName, attendantName } = req.body;
     
-    if (!sessionId) {
-        return res.status(400).json({ error: 'sessionId required' });
-    }
-    
-    if (sessions.has(sessionId)) {
-        return res.json({ success: true, message: 'Session already active' });
-    }
+    if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+    if (sessions.has(sessionId)) return res.json({ success: true, message: 'Session active' });
     
     let qrSent = false;
     
     const client = new Client({
         authStrategy: new LocalAuth({ clientId: sessionId }),
         puppeteer: { 
-            headless: true, 
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] 
+            headless: true,
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process',
+                '--disable-gpu'
+            ]
         }
     });
     
@@ -64,7 +73,7 @@ app.post('/api/start', async (req, res) => {
         console.log(`📩 Mensagem: ${message.body.substring(0, 50)}`);
         
         try {
-            const prompt = (session.systemPrompt || 'Você é um atendente')
+            const prompt = (session.systemPrompt || 'Você é um atendente virtual')
                 .replace(/{clinic_name}/g, session.clinicName || 'Clínica')
                 .replace(/{attendant_name}/g, session.attendantName || 'Atendente');
             
@@ -73,19 +82,22 @@ app.post('/api/start', async (req, res) => {
                 messages: [
                     { role: 'system', content: prompt },
                     { role: 'user', content: message.body }
-                ]
+                ],
+                temperature: 0.7,
+                max_tokens: 500
             }, {
                 headers: {
                     'Authorization': `Bearer ${GROQ_API_KEY}`,
                     'Content-Type': 'application/json'
-                }
+                },
+                timeout: 30000
             });
             
             await client.sendMessage(message.from, response.data.choices[0].message.content);
             console.log('📤 Resposta enviada');
         } catch (err) {
             console.error('Erro IA:', err.message);
-            await client.sendMessage(message.from, 'Desculpe, tente novamente.');
+            await client.sendMessage(message.from, 'Desculpe, estou com um problema técnico. Tente novamente em alguns instantes.');
         }
     });
     
@@ -97,9 +109,7 @@ app.post('/api/start', async (req, res) => {
     await client.initialize();
     
     setTimeout(() => {
-        if (!qrSent) {
-            res.json({ success: true, message: 'Waiting for QR code...', qrCode: null });
-        }
+        if (!qrSent) res.json({ success: true, message: 'Aguardando QR...', qrCode: null });
     }, 15000);
 });
 
