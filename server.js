@@ -4,12 +4,21 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const axios = require('axios');
 
 const app = express();
-app.use(cors());
+
+// CORS mais permissivo para teste
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type']
+}));
+
 app.use(express.json());
+
+// SUA API KEY DO GROQ
+const GROQ_API_KEY = "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"; // COLE SUA CHAVE AQUI
 
 const activeSessions = new Map();
 
-// ========== ROTA PRINCIPAL (CORRIGE O ERRO "Cannot GET /") ==========
 app.get('/', (req, res) => {
     res.json({ 
         status: 'online', 
@@ -20,7 +29,13 @@ app.get('/', (req, res) => {
         }
     });
 });
-// ====================================================================
+
+app.options('/api/start', (req, res) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    res.sendStatus(200);
+});
 
 app.get('/api/status/:sessionId', (req, res) => {
     const session = activeSessions.get(req.params.sessionId);
@@ -34,7 +49,10 @@ app.get('/api/status/:sessionId', (req, res) => {
 });
 
 app.post('/api/start', async (req, res) => {
-    const { sessionId, apiKey, provider, model, systemPrompt, clinicName, attendantName } = req.body;
+    console.log('📱 Recebida requisição para /api/start');
+    console.log('Body:', req.body);
+    
+    const { sessionId, systemPrompt, clinicName, attendantName } = req.body;
     
     if (!sessionId) {
         return res.status(400).json({ error: 'sessionId required' });
@@ -55,7 +73,7 @@ app.post('/api/start', async (req, res) => {
     });
     
     client.on('qr', async (qr) => {
-        console.log(`QR Code generated for ${sessionId}`);
+        console.log(`📱 QR Code gerado para ${sessionId}`);
         if (!qrCodeSent) {
             qrCodeSent = true;
             res.json({ success: true, qrCode: qr });
@@ -63,12 +81,9 @@ app.post('/api/start', async (req, res) => {
     });
     
     client.on('ready', () => {
-        console.log(`✅ WhatsApp connected for ${sessionId}`);
+        console.log(`✅ WhatsApp conectado para ${sessionId}`);
         activeSessions.set(sessionId, { 
             client, 
-            apiKey, 
-            provider, 
-            model, 
             systemPrompt,
             clinicName,
             attendantName,
@@ -81,20 +96,20 @@ app.post('/api/start', async (req, res) => {
         if (!session || !session.isReady) return;
         if (message.fromMe) return;
         
-        console.log(`📩 Message from ${message.from}: ${message.body}`);
+        console.log(`📩 Mensagem de ${message.from}`);
         
         try {
-            const response = await callAI(message.body, session);
+            const response = await callGroqAI(message.body, session);
             await client.sendMessage(message.from, response);
-            console.log(`📤 Response sent to ${message.from}`);
+            console.log(`📤 Resposta enviada`);
         } catch (error) {
-            console.error('Error:', error);
+            console.error('Erro:', error);
             await client.sendMessage(message.from, 'Desculpe, estou com um problema técnico. Tente novamente.');
         }
     });
     
     client.on('disconnected', () => {
-        console.log(`❌ WhatsApp disconnected for ${sessionId}`);
+        console.log(`❌ WhatsApp desconectado para ${sessionId}`);
         activeSessions.delete(sessionId);
     });
     
@@ -104,44 +119,40 @@ app.post('/api/start', async (req, res) => {
         if (!qrCodeSent) {
             res.json({ success: true, message: 'Waiting for QR code...', qrCode: null });
         }
-    }, 5000);
+    }, 10000);
 });
 
-async function callAI(userMessage, session) {
-    const { apiKey, provider, model, systemPrompt, clinicName, attendantName } = session;
+async function callGroqAI(userMessage, session) {
+    const { systemPrompt, clinicName, attendantName } = session;
     
     const finalPrompt = (systemPrompt || 'Você é um atendente virtual')
         .replace(/{clinic_name}/g, clinicName || 'Clínica')
         .replace(/{attendant_name}/g, attendantName || 'Atendente');
     
     try {
-        if (provider === 'groq') {
-            const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-                model: model || 'mixtral-8x7b-32768',
-                messages: [
-                    { role: 'system', content: finalPrompt },
-                    { role: 'user', content: userMessage }
-                ],
-                temperature: 0.7,
-                max_tokens: 500
-            }, {
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            return response.data.choices[0].message.content;
-        } else {
-            return "Desculpe, provedor de IA não configurado. Use Groq.";
-        }
+        const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+            model: 'mixtral-8x7b-32768',
+            messages: [
+                { role: 'system', content: finalPrompt },
+                { role: 'user', content: userMessage }
+            ],
+            temperature: 0.7,
+            max_tokens: 500
+        }, {
+            headers: {
+                'Authorization': `Bearer ${GROQ_API_KEY}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        return response.data.choices[0].message.content;
     } catch (error) {
-        console.error('AI Error:', error.response?.data || error.message);
-        return "Desculpe, erro ao processar sua mensagem. Tente novamente.";
+        console.error('Groq API Error:', error.response?.data || error.message);
+        return "Desculpe, estou com dificuldades técnicas. Por favor, tente novamente em alguns minutos.";
     }
 }
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 ClinicAI Backend running on port ${PORT}`);
-    console.log(`📱 Health check: http://localhost:${PORT}/`);
 });
