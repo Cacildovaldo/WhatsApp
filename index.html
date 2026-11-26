@@ -44,6 +44,9 @@
       background-color: var(--bg);
       color: var(--text);
       line-height: 1.55;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
     }
 
     .hidden { display: none !important; }
@@ -165,6 +168,7 @@
       display: flex;
       flex-direction: column;
       gap: 20px;
+      flex: 1;
     }
 
     .card {
@@ -204,6 +208,9 @@
       background: #fff;
       color: var(--text);
     }
+
+    .alert-info { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; padding: 10px 14px; border-radius: 9px; font-size: 0.82rem; margin-bottom: 12px; }
+    .alert-warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; padding: 10px 14px; border-radius: 9px; font-size: 0.82rem; margin-bottom: 12px; }
 
     /* Volante de Seleção */
     .num-grid {
@@ -292,6 +299,10 @@
       font-weight: 800;
       color: var(--blue);
     }
+    .tabela-resumo tr.win-row {
+      background: #dcfce7;
+      font-weight: 700;
+    }
 
     .jogos-list {
       display: grid;
@@ -331,6 +342,20 @@
       color: #166534;
     }
 
+    .obs-list { list-style: none; padding: 0; }
+    .obs-list li { padding: 10px 14px; border-left: 4px solid var(--warning); background: #fffbeb; margin-bottom: 8px; border-radius: 6px; font-size: .85rem; }
+    .obs-list li strong { color: #92400e; }
+    .obs-list li.info { border-left-color: var(--blue); background: #eff6ff; }
+    .obs-list li.info strong { color: #1e40af; }
+    .obs-list li.danger { border-left-color: var(--danger); background: #fee2e2; }
+    .obs-list li.danger strong { color: #991b1b; }
+    .obs-list li.ok { border-left-color: var(--accent); background: #dcfce7; }
+    .obs-list li.ok strong { color: #166534; }
+
+    footer { background: var(--primary); color: #cbd5e1; text-align: center; padding: 20px; font-size: .8rem; margin-top: auto; }
+    footer p { margin-bottom: 8px; }
+    footer .destaque { color: #fbbf24; font-weight: 800; font-size: .95rem; }
+
     .toast {
       position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(30px);
       background: #065f46; color: #fff; padding: 12px 20px; border-radius: 10px;
@@ -346,7 +371,7 @@
     }
 
     @media print {
-      #lockScreen, header, .no-print { display: none !important; }
+      #lockScreen, header, .no-print, footer { display: none !important; }
       body { background: #ffffff; }
       .card { box-shadow: none; border: 1px solid #cbd5e1; }
       .jogos-list { max-height: none; overflow: visible; }
@@ -356,6 +381,7 @@
 <body>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <input type="file" id="importTxtInput" accept=".txt,text/plain" class="hidden" onchange="handleImportTxt(event)" />
 
   <!-- TELA DE BLOQUEIO POR SENHA -->
   <div id="lockScreen">
@@ -388,6 +414,7 @@
         </div>
         <div class="header-actions no-print">
           <span class="badge-offline">🔒 Acesso liberado</span>
+          <button type="button" class="btn btn-outline" onclick="triggerImportTxt()">📂 Importar .TXT</button>
           <button type="button" class="btn btn-outline" onclick="exportTxt()">📥 Baixar .TXT</button>
           <button type="button" class="btn btn-outline" onclick="copyAllGames()">📋 Copiar Jogos</button>
           <button type="button" class="btn btn-primary" onclick="window.print()">🖨️ Imprimir / PDF</button>
@@ -421,22 +448,58 @@
           </div>
 
           <div class="field">
-            <label for="limiteVolante">Volante Total</label>
+            <label for="limiteVolante">Modalidade / Preço</label>
             <select id="limiteVolante" onchange="changeVolanteLimit()">
-              <option value="60" selected>Mega-Sena / Dupla Sena (01 a 60)</option>
-              <option value="80">Quina (01 a 80)</option>
+              <option value="60_mega" selected>Mega-Sena (60 Dezenas) — R$ 6,00/jogo</option>
+              <option value="60_dupla">Dupla Sena (60 Dezenas) — R$ 3,00/jogo</option>
+              <option value="80_quina">Quina (80 Dezenas) — R$ 2,50/jogo</option>
             </select>
           </div>
 
           <div class="field">
             <label for="valorAposta">Valor por Jogo (R$)</label>
-            <input type="number" id="valorAposta" value="5.00" step="0.50" min="0" style="width:120px;" onchange="updateCounters()" />
+            <input type="number" id="valorAposta" value="6.00" step="0.50" min="0" style="width:120px;" onchange="updateCounters(); salvarEstado();" />
           </div>
 
           <button type="button" class="btn btn-success" onclick="gerarFechamento()">⚡ Gerar Jogos da Matriz</button>
         </div>
 
+        <div class="alert-info">
+          💡 <strong>Salvamento automático ativado:</strong> Suas dezenas marcadas e os jogos gerados ficam salvos neste navegador para você consultar e conferir após o sorteio, mesmo se fechar a página.
+        </div>
+
         <div id="gridDezenas" class="num-grid"></div>
+      </section>
+
+      <!-- TABELA INFORMATIVA DE VALORES DAS APOSTAS DA MEGA-SENA E DUPLA SENA -->
+      <section class="card no-print">
+        <div class="card-header">
+          <div>
+            <h2>ℹ️ Tabela Oficial de Apostas Múltiplas e Custos</h2>
+            <p>Confira os valores por quantidade de dezenas marcadas em um único volante na Mega-Sena e Dupla Sena.</p>
+          </div>
+        </div>
+        <div style="overflow-x: auto;">
+          <table class="tabela-resumo">
+            <thead>
+              <tr>
+                <th>Dezenas Marcadas</th>
+                <th>Mega-Sena (Preço da Aposta)</th>
+                <th>Dupla Sena (Preço da Aposta)</th>
+                <th>Combinações Simples Equivalentes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="win-row"><td>6 números (Mínima)</td><td>R$ 6,00</td><td>R$ 3,00</td><td>1 jogo</td></tr>
+              <tr><td>7 números</td><td>R$ 42,00</td><td>R$ 21,00</td><td>7 jogos</td></tr>
+              <tr><td>8 números</td><td>R$ 168,00</td><td>R$ 84,00</td><td>28 jogos</td></tr>
+              <tr><td>9 números</td><td>R$ 504,00</td><td>R$ 252,00</td><td>84 jogos</td></tr>
+              <tr><td>10 números</td><td>R$ 1.260,00</td><td>R$ 630,00</td><td>210 jogos</td></tr>
+              <tr><td>15 números (Máx. Dupla)</td><td>R$ 30.030,00</td><td>R$ 15.015,00 (Máxima)</td><td>5.005 jogos</td></tr>
+              <tr><td>20 números (Máx. Mega)</td><td>R$ 232.560,00 (Máxima)</td><td>—</td><td>38.760 jogos</td></tr>
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <!-- CONFERIDOR -->
@@ -450,9 +513,9 @@
         <div class="controls-row" style="margin-bottom:0;">
           <div class="field" style="flex:1; min-width:240px;">
             <label for="resultadoSorteio">Resultado do Sorteio (Até 6 Dezenas)</label>
-            <input type="text" id="resultadoSorteio" placeholder="Ex: 01 02 03 04 05 06" oninput="conferirJogos()" />
+            <input type="text" id="resultadoSorteio" placeholder="Ex: 01 02 03 04 05 06" oninput="conferirJogos(); salvarEstado();" />
           </div>
-          <button type="button" class="btn btn-dark" onclick="conferirJogos()">🎯 Conferir Jogos</button>
+          <button type="button" class="btn btn-dark" onclick="conferirJogos(); salvarEstado();">🎯 Conferir Jogos</button>
         </div>
       </section>
 
@@ -487,9 +550,9 @@
                 </tr>
               </thead>
               <tbody id="tabelaPremiação">
-                <tr><td>Sena (6 acertos)</td><td>6</td><td id="p6">0</td></tr>
-                <tr><td>Quina (5 acertos)</td><td>5</td><td id="p5">0</td></tr>
-                <tr><td>Quadra (4 acertos)</td><td>4</td><td id="p4">0</td></tr>
+                <tr class="win-row"><td>Sena (6 acertos)</td><td>6</td><td id="p6">0</td></tr>
+                <tr class="win-row"><td>Quina (5 acertos)</td><td>5</td><td id="p5">0</td></tr>
+                <tr class="win-row"><td>Quadra (4 acertos)</td><td>4</td><td id="p4">0</td></tr>
                 <tr><td>Terno (3 acertos)</td><td>3</td><td id="p3">0</td></tr>
                 <tr><td>Duque (2 acertos)</td><td>2</td><td id="p2">0</td></tr>
                 <tr><td>Um (1 acerto)</td><td>1</td><td id="p1">0</td></tr>
@@ -503,18 +566,51 @@
           </div>
         </div>
       </section>
+
+      <!-- OBSERVAÇÕES IMPORTANTES -->
+      <section class="card no-print">
+        <div class="card-header">
+          <div>
+            <h2>⚠️ Observações Importantes — Leia Antes de Apostar</h2>
+            <p>Informações sobre custos, riscos e funcionamento.</p>
+          </div>
+        </div>
+        <ul class="obs-list">
+          <li class="info">
+            <strong>💵 Valores de referência:</strong> A aposta mínima da <strong>Mega-Sena (6 dezenas) custa R$ 6,00</strong> e a da <strong>Dupla Sena (6 dezenas) custa R$ 3,00</strong>. Confira os valores vigentes na lotérica antes de apostar.
+          </li>
+          <li class="ok">
+            <strong>✅ Salvamento local automático:</strong> Seus jogos gerados, dezenas escolhidas e resultado digitado ficam salvos localmente neste navegador para conferência posterior.
+          </li>
+          <li>
+            <strong>📂 Backup em arquivo .TXT:</strong> Você pode usar os botões no topo da página para baixar seus jogos em um arquivo <code>.txt</code> ou importá-los de volta em qualquer dispositivo.
+          </li>
+          <li class="danger">
+            <strong>🎲 Loteria envolve risco:</strong> Fechamentos matemáticos organizam as combinações e reduzem o custo, mas não eliminam a aleatoriedade nem garantem prêmios principais sem os acertos necessários. Jogue com responsabilidade.
+          </li>
+        </ul>
+      </section>
     </main>
+
+    <!-- RODAPÉ -->
+    <footer>
+      <p class="destaque">⚠️ AVISO IMPORTANTE</p>
+      <p>Este sistema é uma ferramenta de <strong>combinações matemáticas</strong>. Não existem garantias de prêmios. Jogos de loteria envolvem risco financeiro.</p>
+      <p>Permitido apenas para <strong>maiores de 18 anos</strong>. Jogue com responsabilidade.</p>
+      <p style="margin-top:12px; font-size:.75rem; opacity:.7;">LotoMatriz Profissional © 2027 — Sistema 100% online</p>
+    </footer>
   </div>
 
   <script>
     // ============================================================
-    // 1. AUTENTICAÇÃO E SENHA
+    // 1. AUTENTICAÇÃO E PERSISTÊNCIA LOCAL
     // ============================================================
     const SENHA_ATUAL = "LOTERIA2026";
     const SESSION_KEY = "loto_matriz_ok";
+    const STORAGE_STATE_KEY = "loto_matriz_state_v1";
     let sessaoMemoria = false;
+    let estadoMemoria = null;
 
-    // sessionStorage lança exceção em iframes com sandbox / modo restrito: nunca confiar nele sem try/catch
     function sessaoAtiva() {
       try { return sessionStorage.getItem(SESSION_KEY) === "1"; }
       catch (e) { return sessaoMemoria; }
@@ -527,7 +623,70 @@
       } catch (e) { /* usa apenas a memória */ }
     }
 
-    // Avisos na tela (alert() é bloqueado em muitos visualizadores)
+    function salvarEstado() {
+      if (!isAppReady) return;
+      const payload = {
+        currentMatrixKey,
+        selectedSet: Array.from(selectedSet),
+        jogosGerados,
+        limiteVolanteValue: document.getElementById("limiteVolante")?.value || "60_mega",
+        valorAposta: document.getElementById("valorAposta")?.value ?? "6.00",
+        resultadoSorteio: document.getElementById("resultadoSorteio")?.value || "",
+        statusFechamento: document.getElementById("statusFechamento")?.textContent || "",
+        updatedAt: Date.now()
+      };
+      estadoMemoria = payload;
+      try {
+        localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(payload));
+      } catch (e) { /* fallback em memória */ }
+    }
+
+    function carregarEstado() {
+      let raw = null;
+      try {
+        const str = localStorage.getItem(STORAGE_STATE_KEY);
+        if (str) raw = JSON.parse(str);
+      } catch (e) { /* ignora */ }
+      if (!raw && estadoMemoria) raw = estadoMemoria;
+      if (!raw || typeof raw !== "object") return false;
+
+      if (raw.currentMatrixKey && MATRICES[raw.currentMatrixKey]) {
+        currentMatrixKey = raw.currentMatrixKey;
+        if (document.getElementById("matrizSelect")) {
+          document.getElementById("matrizSelect").value = currentMatrixKey;
+        }
+      }
+
+      if (raw.limiteVolanteValue && document.getElementById("limiteVolante")) {
+        document.getElementById("limiteVolante").value = raw.limiteVolanteValue;
+        aplicarLimiteEValorVolante(raw.limiteVolanteValue);
+      }
+
+      if (Array.isArray(raw.selectedSet)) {
+        selectedSet = new Set(
+          raw.selectedSet
+            .map(n => parseInt(n, 10))
+            .filter(n => !isNaN(n) && n >= 1 && n <= maxGridCount)
+        );
+      }
+
+      if (Array.isArray(raw.jogosGerados)) {
+        jogosGerados = raw.jogosGerados;
+      }
+
+      if (raw.valorAposta !== undefined && document.getElementById("valorAposta")) {
+        document.getElementById("valorAposta").value = raw.valorAposta;
+      }
+      if (typeof raw.resultadoSorteio === "string" && document.getElementById("resultadoSorteio")) {
+        document.getElementById("resultadoSorteio").value = raw.resultadoSorteio;
+      }
+      if (typeof raw.statusFechamento === "string" && document.getElementById("statusFechamento")) {
+        document.getElementById("statusFechamento").textContent = raw.statusFechamento;
+      }
+
+      return true;
+    }
+
     function avisar(msg, erro = true) {
       const el = document.getElementById("toast");
       el.textContent = msg;
@@ -563,11 +722,10 @@
     }
 
     function logoutSession() {
+      salvarEstado();
       sessaoSalvar(false);
       location.reload();
     }
-
-    // (verificarSessao() é chamada no final do script, depois de tudo declarado)
 
     // ============================================================
     // 2. MATRIZES FIÉIS ÀS PLANILHAS EXCEL (VERIFICADAS LINHA A LINHA)
@@ -623,13 +781,33 @@
     function initApp() {
       if (isAppReady) return;
       isAppReady = true;
+      const restaurou = carregarEstado();
       renderGrid();
-      gerarFechamento();
+      if (!restaurou || !jogosGerados.length) {
+        gerarFechamento();
+      } else {
+        updateCounters();
+        conferirJogos();
+        avisar(`${jogosGerados.length} jogo(s) restaurado(s) do navegador.`, false);
+      }
+    }
+
+    function aplicarLimiteEValorVolante(valStr) {
+      if (valStr.startsWith("60_dupla")) {
+        maxGridCount = 60;
+        document.getElementById("valorAposta").value = "3.00";
+      } else if (valStr.startsWith("80")) {
+        maxGridCount = 80;
+        document.getElementById("valorAposta").value = "2.50";
+      } else {
+        maxGridCount = 60;
+        document.getElementById("valorAposta").value = "6.00";
+      }
     }
 
     function changeVolanteLimit() {
-      maxGridCount = parseInt(document.getElementById("limiteVolante").value, 10);
-      // remove dezenas que ficariam fora do novo volante
+      const valStr = document.getElementById("limiteVolante").value;
+      aplicarLimiteEValorVolante(valStr);
       Array.from(selectedSet).forEach(n => { if (n > maxGridCount) selectedSet.delete(n); });
       renderGrid();
       sincronizar();
@@ -639,7 +817,6 @@
       currentMatrixKey = document.getElementById("matrizSelect").value;
       const mat = MATRICES[currentMatrixKey];
       
-      // Ajusta dezenas selecionadas para o número de dezenas exigido pela nova matriz
       selectedSet.clear();
       for (let i = 1; i <= mat.reqCount; i++) {
         selectedSet.add(i);
@@ -675,7 +852,6 @@
       sincronizar();
     }
 
-    // Mantém os jogos sempre coerentes com as dezenas marcadas
     function sincronizar() {
       gerarFechamento(true);
     }
@@ -715,12 +891,12 @@
         if (silencioso !== true) avisar(msg);
         updateCounters();
         conferirJogos();
+        salvarEstado();
         return;
       }
 
       const arrDezenas = Array.from(selectedSet).sort((a, b) => a - b);
       
-      // Mapeamento direto de índices para as dezenas escolhidas
       jogosGerados = mat.data.map(jogoIndices => {
         return jogoIndices.map(idx => arrDezenas[idx - 1]).sort((a, b) => a - b);
       });
@@ -728,6 +904,8 @@
       document.getElementById("statusFechamento").textContent = `Matriz ${mat.name} gerada com sucesso: ${jogosGerados.length} jogos.`;
       updateCounters();
       conferirJogos();
+      salvarEstado();
+      if (silencioso !== true) avisar(`${jogosGerados.length} jogos gerados e salvos!`, false);
     }
 
     function conferirJogos() {
@@ -737,9 +915,10 @@
         .map(s => parseInt(s.trim(), 10))
         .filter(n => !isNaN(n) && n >= 1 && n <= maxGridCount);
 
-      // o sorteio tem no máximo 6 dezenas distintas (evita contagem de acertos impossível)
-      const sorteioSet = new Set(sorteioNums.slice(0, 6).length === sorteioNums.length ? sorteioNums : Array.from(new Set(sorteioNums)).slice(0, 6));
-      let acertosCount = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
+      const mat = MATRICES[currentMatrixKey];
+      const maxDezenasResultado = mat.gameSize || 6;
+      const sorteioSet = new Set(sorteioNums.slice(0, maxDezenasResultado).length === sorteioNums.length ? sorteioNums : Array.from(new Set(sorteioNums)).slice(0, maxDezenasResultado));
+      let acertosCount = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0 };
 
       const avaliados = jogosGerados.map((jogo, idx) => {
         const hits = jogo.filter(n => sorteioSet.has(n)).length;
@@ -749,9 +928,9 @@
         return { numero: idx + 1, dezenas: jogo, hits, hasSorteio: sorteioSet.size > 0 };
       });
 
-      // Atualização dos Prêmios na Tabela Lateral
       for (let i = 0; i <= 6; i++) {
-        document.getElementById(`p${i}`).textContent = sorteioSet.size > 0 ? (acertosCount[i] || 0) : 0;
+        const el = document.getElementById(`p${i}`);
+        if (el) el.textContent = sorteioSet.size > 0 ? (acertosCount[i] || 0) : 0;
       }
 
       renderJogos(avaliados);
@@ -791,6 +970,46 @@
         .join("\n");
     }
 
+    function triggerImportTxt() {
+      document.getElementById("importTxtInput")?.click();
+    }
+
+    function handleImportTxt(event) {
+      const file = event.target?.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const content = String(e.target?.result || "");
+        const linhas = content.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const importados = [];
+
+        for (const linha of linhas) {
+          const semPrefixo = linha.replace(/^jogo\s*\d+\s*:\s*/i, "");
+          const nums = semPrefixo
+            .split(/[\s,;\/-]+/)
+            .map(s => parseInt(s.trim(), 10))
+            .filter(n => !isNaN(n) && n >= 1 && n <= maxGridCount);
+          const unicos = Array.from(new Set(nums)).sort((a, b) => a - b);
+          if (unicos.length >= 6) {
+            importados.push(unicos);
+          }
+        }
+
+        if (!importados.length) {
+          avisar("Nenhum jogo válido encontrado no arquivo .TXT.");
+        } else {
+          jogosGerados = importados;
+          document.getElementById("statusFechamento").textContent = `${jogosGerados.length} jogos importados do arquivo .TXT.`;
+          updateCounters();
+          conferirJogos();
+          salvarEstado();
+          avisar(`${jogosGerados.length} jogo(s) importado(s) com sucesso!`, false);
+        }
+        event.target.value = "";
+      };
+      reader.readAsText(file, "utf-8");
+    }
+
     function copyAllGames() {
       if (!jogosGerados.length) return avisar("Gere os jogos primeiro (selecione todas as dezenas da matriz).");
       const texto = getTextoJogos();
@@ -821,7 +1040,7 @@
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
-    // Inicialização: só agora tudo (MATRICES, variáveis let, funções) já existe
+    // Inicialização
     verificarSessao();
   </script>
 </body>
